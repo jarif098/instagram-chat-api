@@ -16,6 +16,32 @@ const {
   InstaChatError
 } = require('../utils/errors');
 
+const MOBILE_APP_ID = '567067343352427';
+const MOBILE_USER_AGENT =
+  'Instagram 449.0.0.52.84 Android (34/14; 480dpi; 1344x2992; Google/google; Pixel 8 Pro; husky; husky; en_US; 1079242191)';
+const INBOX_TRAY_CLIENT_DOC_ID = '26838444193647008103482058049';
+
+/**
+ * Safely parses JSON while preserving 64-bit integer IDs (15+ digits) as strings.
+ *
+ * @param {string|Object} rawText
+ * @returns {Object}
+ */
+function parseJsonPreservingBigInts(rawText) {
+  if (typeof rawText !== 'string') return rawText;
+  const trimmed = rawText.trim();
+  if (!trimmed) return {};
+  try {
+    const safeText = trimmed.replace(
+      /("(?:id|note_id|pk|user_id|author_id|inbox_tray_item_id)"\s*:\s*)(\d{15,})/g,
+      '$1"$2"'
+    );
+    return JSON.parse(safeText);
+  } catch (_err) {
+    return rawText;
+  }
+}
+
 /**
  * Service for managing Instagram Direct Notes (24h status bubbles at top of inbox).
  */
@@ -34,6 +60,8 @@ class NotesService {
     this.logger = options.logger;
     this.conversationsService = options.conversationsService;
     this.messagesService = options.messagesService;
+    this._deviceId = this._generateUuid();
+    this._phoneId = this._generateUuid();
   }
 
   get currentUserId() {
@@ -42,6 +70,59 @@ class NotesService {
 
   _generateUuid() {
     return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  }
+
+  /**
+   * Builds mobile private API headers including the Bearer IGT:2 authorization token
+   * derived from the active session cookie.
+   *
+   * @private
+   * @param {Object} [extraHeaders={}]
+   * @returns {Object}
+   */
+  _buildMobileHeaders(extraHeaders = {}) {
+    const cookies = (this.session && this.session.cookies) || {};
+    const rawSessionId = cookies.sessionid ? String(cookies.sessionid) : '';
+    const decodedSessionId = rawSessionId ? decodeURIComponent(rawSessionId) : '';
+    const userId = String(
+      this.currentUserId ||
+        cookies.ds_user_id ||
+        (decodedSessionId ? decodedSessionId.split(':')[0] : '') ||
+        '0'
+    );
+    const androidId =
+      'android-' + crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+
+    const headers = {
+      'User-Agent': MOBILE_USER_AGENT,
+      'x-ig-app-id': MOBILE_APP_ID,
+      'X-IG-App-ID': MOBILE_APP_ID,
+      'X-IG-App-Locale': 'en_US',
+      'X-IG-Device-Locale': 'en_US',
+      'X-IG-Mapped-Locale': 'en_US',
+      'X-IG-Device-ID': this._deviceId,
+      'X-IG-Family-Device-ID': this._phoneId,
+      'X-IG-Android-ID': androidId,
+      'X-IG-Capabilities': '3brTv10=',
+      'X-IG-Connection-Type': 'WIFI',
+      'IG-INTENDED-USER-ID': userId,
+      'IG-U-DS-USER-ID': userId,
+      Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+    };
+
+    if (decodedSessionId) {
+      const authData = {
+        ds_user_id: userId,
+        sessionid: decodedSessionId,
+        should_use_header_over_cookies: true
+      };
+      headers.Authorization = `Bearer IGT:2:${Buffer.from(JSON.stringify(authData)).toString('base64')}`;
+    }
+
+    return {
+      ...headers,
+      ...extraHeaders
+    };
   }
 
   /**
@@ -70,17 +151,90 @@ class NotesService {
 
   /**
    * Retrieves active Direct Notes currently visible in the inbox tray.
+   * Uses the private mobile GraphQL InboxTrayRequest (with full author and music metadata)
+   * and falls back to REST /api/v1/notes/get_notes/.
    *
    * @param {Object} [options]
    * @returns {Promise<{notes: Array<Note>, raw: Object}>}
    */
   async getNotes(options = {}) {
+    const hasMobileSessionCookie = Boolean(
+      this.session &&
+        this.session.cookies &&
+        this.session.cookies.sessionid &&
+        typeof this.transport.post === 'function'
+    );
+
+    if (hasMobileSessionCookie) {
+      try {
+        const gqlVars = {
+          should_fetch_friend_map_user: true,
+          should_fetch_friend_map_entrypoint: false,
+          should_fetch_comment_info: false,
+          request: {
+            include_quicksnap_pog: false,
+            include_friend_map_pog: false,
+            inbox_tray_item_ids_on_client: []
+          },
+          is_saved_media_on_map_enabled: false,
+          is_location_likes_v2_enabled: true
+        };
+        const gqlBody = new URLSearchParams({
+          method: 'post',
+          pretty: 'false',
+          format: 'json',
+          server_timestamps: 'true',
+          locale: 'user',
+          fb_api_req_friendly_name: 'InboxTrayRequest',
+          enable_canonical_naming: 'true',
+          enable_canonical_variable_overrides: 'true',
+          enable_canonical_naming_ambiguous_type_prefixing: 'true',
+          variables: JSON.stringify(gqlVars),
+          client_doc_id: INBOX_TRAY_CLIENT_DOC_ID
+        });
+
+        const gqlRes = await this.transport.post(
+          `https://i.instagram.com/graphql/query`,
+          gqlBody.toString(),
+          {
+            headers: this._buildMobileHeaders({
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-FB-Friendly-Name': 'InboxTrayRequest',
+              'X-Root-Field-Name': 'xdt_get_inbox_tray_items',
+              'X-Client-Doc-Id': INBOX_TRAY_CLIENT_DOC_ID,
+              Priority: 'u=3, i'
+            }),
+            transformResponse: [parseJsonPreservingBigInts]
+          },
+          true
+        );
+
+        const gqlData = (gqlRes && gqlRes.data) || {};
+        const trayPayload = Object.values(gqlData.data || {}).find(
+          (val) => val && typeof val === 'object' && Array.isArray(val.inbox_tray_items)
+        );
+        if (trayPayload && Array.isArray(trayPayload.inbox_tray_items)) {
+          const notes = trayPayload.inbox_tray_items
+            .filter((item) => item && (item.note_dict || item.inbox_tray_item_type === 'note'))
+            .map((item) => Note.fromRaw(item, this.currentUserId));
+          return {
+            notes,
+            raw: gqlData
+          };
+        }
+      } catch (gqlErr) {
+        if (gqlErr instanceof AuthenticationError || gqlErr instanceof RateLimitError) throw gqlErr;
+        if (this.logger && typeof this.logger.debug === 'function') {
+          this.logger.debug(`InboxTrayRequest GraphQL failed (${gqlErr.message}), falling back to REST...`);
+        }
+      }
+    }
+
     let response;
     try {
       response = await this.transport.get(Endpoints.NOTES_GET, {
-        headers: {
-          Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-        }
+        headers: this._buildMobileHeaders(),
+        transformResponse: [parseJsonPreservingBigInts]
       });
     } catch (err) {
       if (err instanceof AuthenticationError || err instanceof RateLimitError) throw err;
@@ -89,9 +243,8 @@ class NotesService {
       }
       try {
         response = await this.transport.get(Endpoints.NOTES_GET_WEB, {
-          headers: {
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
+          headers: this._buildMobileHeaders(),
+          transformResponse: [parseJsonPreservingBigInts]
         });
       } catch (fallbackErr) {
         if (fallbackErr instanceof AuthenticationError || fallbackErr instanceof RateLimitError) throw fallbackErr;
@@ -106,7 +259,7 @@ class NotesService {
     if (data.status === 'fail') {
       if (this.logger && typeof this.logger.warn === 'function') {
         this.logger.warn(
-          'Instagram Notes inbox tray returned status: fail. Notes are restricted by Meta to mobile app sessions; web browser sessions cannot access the Notes tray.'
+          'Instagram Notes inbox tray returned status: fail.'
         );
       }
       return {
@@ -185,7 +338,15 @@ class NotesService {
     const csrfToken = this.session ? this.session.getCsrfToken() : '';
     const uuid = this._generateUuid();
 
+    const signedObj = {
+      note_style: noteStyle,
+      text: cleanText,
+      _uuid: uuid,
+      audience
+    };
+
     const payload = new URLSearchParams();
+    payload.append('signed_body', `SIGNATURE.${JSON.stringify(signedObj)}`);
     payload.append('text', cleanText);
     payload.append('audience', String(audience));
     payload.append('note_style', String(noteStyle));
@@ -194,16 +355,18 @@ class NotesService {
       payload.append('_csrftoken', csrfToken);
     }
 
+    const reqHeaders = this._buildMobileHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+    });
+
     let response;
     try {
       response = await this.transport.post(
         Endpoints.NOTES_CREATE,
         payload.toString(),
         {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
+          headers: reqHeaders,
+          transformResponse: [parseJsonPreservingBigInts]
         },
         false
       );
@@ -224,10 +387,8 @@ class NotesService {
           Endpoints.NOTES_CREATE_WEB,
           payload.toString(),
           {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-            }
+            headers: reqHeaders,
+            transformResponse: [parseJsonPreservingBigInts]
           },
           false
         );
@@ -283,12 +444,22 @@ class NotesService {
     const csrfToken = this.session ? this.session.getCsrfToken() : '';
     const uuid = this._generateUuid();
 
+    const signedObj = {
+      id: targetId,
+      _uuid: uuid
+    };
+
     const payload = new URLSearchParams();
+    payload.append('signed_body', `SIGNATURE.${JSON.stringify(signedObj)}`);
     payload.append('id', targetId);
     payload.append('_uuid', uuid);
     if (csrfToken) {
       payload.append('_csrftoken', csrfToken);
     }
+
+    const reqHeaders = this._buildMobileHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+    });
 
     let response;
     try {
@@ -296,10 +467,8 @@ class NotesService {
         Endpoints.NOTES_DELETE,
         payload.toString(),
         {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
+          headers: reqHeaders,
+          transformResponse: [parseJsonPreservingBigInts]
         },
         false
       );
@@ -320,10 +489,8 @@ class NotesService {
           Endpoints.NOTES_DELETE_WEB,
           payload.toString(),
           {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-            }
+            headers: reqHeaders,
+            transformResponse: [parseJsonPreservingBigInts]
           },
           false
         );
@@ -373,10 +540,9 @@ class NotesService {
         Endpoints.NOTE_LIKE(cleanId),
         payload.toString(),
         {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
+          headers: this._buildMobileHeaders({
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+          })
         },
         false
       );
@@ -423,10 +589,9 @@ class NotesService {
         Endpoints.NOTE_UNLIKE(cleanId),
         payload.toString(),
         {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
+          headers: this._buildMobileHeaders({
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+          })
         },
         false
       );

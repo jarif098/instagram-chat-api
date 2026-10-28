@@ -154,11 +154,15 @@ class HttpTransport {
     }
 
     // Checkpoint / Challenge (400 with checkpoint_required)
-    if (responseData.checkpoint_url || responseData.message === 'checkpoint_required') {
+    if (
+      responseData.checkpoint_url ||
+      responseData.message === 'checkpoint_required' ||
+      responseData.message === 'challenge_required'
+    ) {
       return new AuthenticationError('Account checkpoint verification required by Instagram', {
         code: 'CHECKPOINT_REQUIRED',
         checkpointRequired: true,
-        checkpointUrl: responseData.checkpoint_url || null,
+        checkpointUrl: responseData.checkpoint_url || (responseData.challenge && responseData.challenge.url) || null,
         details: responseData
       });
     }
