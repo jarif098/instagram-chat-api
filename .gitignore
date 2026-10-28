@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Sensitive configuration and sessions
+config.json
+data/
+session*.json
+*.session.json
+cookie*.json
+cookies*.json
+*.cookie.json
+
+
+# Environment and logs
+.env
+*.log
+npm-debug.log*
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Media temp and test files
+temp/
+scratch/
+tests/fixtures/temp*

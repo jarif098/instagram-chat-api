@@ -1,0 +1,20 @@
+# Development and tests
+tests/
+research/
+scratch/
+.github/
+
+# Sessions and credentials
+cookie*.json
+cookies*.json
+session*.json
+*.session.json
+config.json
+data/
+*.log
+
+# OS and Editor files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

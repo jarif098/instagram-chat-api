@@ -1,0 +1,39 @@
+{
+  "name": "instachat-api",
+  "version": "1.0.0",
+  "description": "Lightweight, modular, zero-browser-overhead Instagram Direct Web Messaging API for Node.js",
+  "main": "src/index.js",
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md",
+    "config.example.json"
+  ],
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/*.test.js"
+  },
+  "keywords": [
+    "instagram",
+    "direct-messages",
+    "instagram-dm",
+    "messaging",
+    "bot",
+    "api",
+    "chat",
+    "instagram-api",
+    "instagram-bot",
+    "dm-bot",
+    "chat-theme",
+    "realtime"
+  ],
+  "author": "JARiF",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.9"
+  }
+}
