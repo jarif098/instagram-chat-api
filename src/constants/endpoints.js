@@ -97,6 +97,16 @@ const Endpoints = Object.freeze({
   RESTRICT_USER: `${BASE_URL}/api/v1/restrict_action/restrict/`,
   UNRESTRICT_USER: `${BASE_URL}/api/v1/restrict_action/unrestrict/`,
 
+  // Instagram Direct Notes
+  NOTES_GET: `${API_BASE_URL}/api/v1/notes/get_notes/`,
+  NOTES_GET_WEB: `${BASE_URL}/api/v1/notes/get_notes/`,
+  NOTES_CREATE: `${API_BASE_URL}/api/v1/notes/create_note/`,
+  NOTES_CREATE_WEB: `${BASE_URL}/api/v1/notes/create_note/`,
+  NOTES_DELETE: `${API_BASE_URL}/api/v1/notes/delete_note/`,
+  NOTES_DELETE_WEB: `${BASE_URL}/api/v1/notes/delete_note/`,
+  NOTE_LIKE: (noteId) => `${API_BASE_URL}/api/v1/notes/${noteId}/like/`,
+  NOTE_UNLIKE: (noteId) => `${API_BASE_URL}/api/v1/notes/${noteId}/unlike/`,
+
   // Web client identifiers
   WEB_APP_ID: '936619743392459',
   ASBD_ID: '359341',

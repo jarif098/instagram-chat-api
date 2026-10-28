@@ -37,6 +37,13 @@ Interacting with Instagram via private internal endpoints (`direct_v2`) is subje
   - Search Instagram users globally by keyword or handle.
   - Inspect single or batch friendship statuses (`following`, `followedBy`, pending requests, close friends, restricted).
   - Follow, unfollow, remove followers, paginate follower/following lists, manage incoming follow requests (list, approve, ignore), block/unblock, restrict/unrestrict, and mute/unmute posts & stories.
+- **Instagram Direct Notes API:**
+  - View active 24-hour status notes across mutual followers and close friends (`getNotes`).
+  - Retrieve current viewer's active note (`getMyNote`) or search notes by username (`getNoteByUser`).
+  - Publish new text notes with custom visibility scope (`createNote`, up to 60 characters, `MUTUAL_FOLLOWERS` or `CLOSE_FRIENDS`).
+  - Like and unlike notes in the inbox tray (`likeNote`, `unlikeNote`).
+  - Delete active notes (`deleteNote`).
+  - Send direct message replies to note authors referencing the active note (`replyToNote`).
 - **Resilient Transport:** Built-in exponential backoff retry with full jitter, server `Retry-After` adherence, non-idempotent operation safeguards, and automated Set-Cookie rotation tracking.
 - **Security & Privacy by Design:** Automated secret redaction across loggers, errors, and memory representations. No passwords or tokens logged or committed to version control.
 - **Developer-Friendly:** Written in CommonJS (`require`), fully tested with Node.js built-in test runner (`node:test`), and zero external binary dependencies.
@@ -65,6 +72,7 @@ Interacting with Instagram via private internal endpoints (`direct_v2`) is subje
 | **Get User Profile (Username / ID)** | Supported | `GET /api/v1/users/web_profile_info/` & `/users/{id}/info/` | Bio, counts, HD avatar, verification & privacy |
 | **Search Users** | Supported | `GET /api/v1/web/search/topsearch/` | Global user & handle discovery |
 | **Friendship Status & Follow/Unfollow** | Supported | `GET/POST /api/v1/friendships/...` | Single/batch status, follow, unfollow, followers/following |
+| **Instagram Direct Notes (Get / Post / Delete / Like / Reply)** | Supported | `GET/POST /api/v1/notes/...` | Full 24h status notes, audience scope (mutual/close friends), like, and DM replies |
 | **Realtime Incoming Messages** | Supported | Adaptive Polling (with Deduplication) | Reliable, zero binary deps, configurable interval |
 | **Realtime MQTT WebSocket** | Unsupported | `wss://edge-chat.instagram.com/chat` | Proprietary binary Thrift protocol; high breakage risk |
 | **End-to-End Encrypted (E2EE)** | Blocked | Meta Signal E2EE Threads | E2EE chats require device-level keys not exposed via web REST |
@@ -327,6 +335,41 @@ const poll = await client.createPoll(group.id, 'Deploy tonight?', ['Yes', 'Tomor
 await client.votePoll(group.id, poll.pollId, ['0']);
 ```
 
+### 7. Managing Instagram Direct Notes
+
+```javascript
+const { NoteAudience } = require('instachat-api');
+
+// View active 24h notes from mutual connections and close friends in DM tray
+const notes = await client.getNotes();
+for (const note of notes) {
+  console.log(`[${note.user?.username}]: "${note.text}" (Expires in ${Math.round(note.remainingMs / 60000)}m)`);
+  if (note.media) console.log(`  🎵 Track: ${note.media.title} by ${note.media.artist}`);
+}
+
+// Post a new Note (1 to 60 characters)
+const myNewNote = await client.createNote('Building open-source tools with Node.js 🚀', {
+  audience: NoteAudience.MUTUAL_FOLLOWERS // or NoteAudience.CLOSE_FRIENDS
+});
+
+// Inspect your own active note
+const myActiveNote = await client.getMyNote();
+console.log('Active Note:', myActiveNote?.text);
+
+// Find a note by specific username
+const friendNote = await client.getNoteByUser('friend_handle');
+
+// Like or unlike a note
+await client.likeNote(friendNote.id);
+await client.unlikeNote(friendNote.id);
+
+// Reply to a note directly via DM
+await client.replyToNote(friendNote.id, 'Awesome choice of track!');
+
+// Delete your active note
+await client.deleteNote();
+```
+
 ---
 
 ## 📡 Event Reference
@@ -397,11 +440,12 @@ npm test
 npm run test:integration
 ```
 
-All 60 unit tests mock network boundaries and validate:
+All 68 unit tests mock network boundaries and validate:
 - Configuration and schema validation
 - Session loading, cookie parsing, rotation, and persistence
-- Response normalization for users, messages, reactions, replies, mentions, shares, and threads
+- Response normalization for users, messages, reactions, replies, mentions, shares, notes, and threads
 - Group management, message actions (edit/pin/forward), nicknames, moderation, sharing, and GraphQL/REST parity
+- Instagram Direct Notes tray fetching, creating (mutual & close friends), deleting, liking, and DM replies
 - Media file validation (size limits, extensions, MIME types)
 - Resilient exponential backoff retry logic and non-idempotent guards
 - Sliding-window message deduplication, edit/unsend/read-receipt detection, and baseline initialization
@@ -432,16 +476,18 @@ Project_Instagram/
 │   │   ├── read-receipts.js      # GraphQL/REST mark seen & typing indicators
 │   │   ├── themes.js             # Chat theme catalog & switcher
 │   │   ├── nicknames.js          # Custom participant nicknames
-│   │   └── users.js              # Profiles, search, friendships, follow requests & moderation
+│   │   ├── users.js              # Profiles, search, friendships, follow requests & moderation
+│   │   └── notes.js              # 24h Direct Notes (get, post, delete, like, reply)
 │   ├── models/
 │   │   ├── user.js               # Normalized user model
 │   │   ├── message.js            # Normalized message model
-│   │   └── conversation.js       # Normalized thread model
+│   │   ├── conversation.js       # Normalized thread model
+│   │   └── note.js               # Normalized note model
 │   ├── utils/
 │   │   ├── errors.js             # Typed error hierarchy
 │   │   ├── logger.js             # Sanitizing logger with secret redaction
 │   │   ├── retry.js              # Exponential backoff retry utility
-│   │   └── validators.js         # Input and media validators
+│   │   └── validators.js         # Input, note, and media validators
 │   └── constants/
 │       ├── events.js             # Event constants
 │       └── endpoints.js          # Instagram Web direct_v2 endpoints
@@ -455,9 +501,10 @@ Project_Instagram/
 │   ├── conversations.js          # Fetching and paginating inbox example
 │   ├── send-message.js           # Sending text, replying, and unsending example
 │   ├── send-media.js             # Uploading images, videos, and audio example
+│   ├── notes.js                  # Viewing, posting, and deleting Instagram Notes
 │   └── listen-messages.js        # Realtime event listener example
 ├── tests/
-│   ├── unit/                     # 60 Comprehensive unit tests
+│   ├── unit/                     # 68 Comprehensive unit tests
 │   └── integration/              # Controlled conditional live tests
 ├── docs/
 │   ├── protocol-research.md      # Detailed protocol analysis of direct_v2

@@ -17,6 +17,7 @@ const ReadReceiptsService = require('./services/read-receipts');
 const ThemesService = require('./services/themes');
 const NicknamesService = require('./services/nicknames');
 const UsersService = require('./services/users');
+const NotesService = require('./services/notes');
 const { Logger } = require('./utils/logger');
 const { validateConfig } = require('./utils/validators');
 const { AuthenticationError } = require('./utils/errors');
@@ -174,6 +175,14 @@ class InstaChatClient extends EventEmitter {
       session: this.session,
       logger: this.logger,
       conversationsService: this.conversations
+    });
+
+    this.notes = new NotesService({
+      transport: this.transport,
+      session: this.session,
+      logger: this.logger,
+      conversationsService: this.conversations,
+      messagesService: this.messages
     });
 
     // 6. Initialize realtime polling engine
@@ -766,6 +775,45 @@ class InstaChatClient extends EventEmitter {
 
   async unmuteUserMedia(userId, options = {}) {
     return this.users.unmuteUserMedia(userId, options);
+  }
+
+  // --- Instagram Direct Notes API ---
+
+  async getNotes(options = {}) {
+    const res = await this.notes.getNotes(options);
+    return res.notes;
+  }
+
+  async getNotesRaw(options = {}) {
+    return this.notes.getNotes(options);
+  }
+
+  async getMyNote() {
+    return this.notes.getMyNote();
+  }
+
+  async getNoteByUser(usernameOrUserId) {
+    return this.notes.getNoteByUser(usernameOrUserId);
+  }
+
+  async createNote(text, options = {}) {
+    return this.notes.createNote(text, options);
+  }
+
+  async deleteNote(noteId = null) {
+    return this.notes.deleteNote(noteId);
+  }
+
+  async likeNote(noteId) {
+    return this.notes.likeNote(noteId);
+  }
+
+  async unlikeNote(noteId) {
+    return this.notes.unlikeNote(noteId);
+  }
+
+  async replyToNote(noteId, text, options = {}) {
+    return this.notes.replyToNote(noteId, text, options);
   }
 }
 

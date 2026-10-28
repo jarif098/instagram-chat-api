@@ -12,8 +12,14 @@ const MAX_IMAGE_SIZE_BYTES = 15 * 1024 * 1024; // 15MB
 const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024; // 25MB
 const MAX_TEXT_LENGTH = 10000;
+const MAX_NOTE_LENGTH = 60;
 const MAX_SEARCH_QUERY_LENGTH = 150;
 const INSTAGRAM_USERNAME_REGEX = /^[a-zA-Z0-9._]{1,30}$/;
+
+const NOTE_AUDIENCES = Object.freeze({
+  MUTUAL_FOLLOWERS: 0,
+  CLOSE_FRIENDS: 1
+});
 
 function validateConfig(config = {}) {
   if (typeof config !== 'object' || config === null) {
@@ -192,6 +198,29 @@ function validateMediaFile(filePath, type = 'image') {
   };
 }
 
+function validateNoteText(text) {
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    throw new ValidationError('Note text must be a non-empty string.', { field: 'text' });
+  }
+  const clean = text.trim();
+  if (clean.length > MAX_NOTE_LENGTH) {
+    throw new ValidationError(`Note text exceeds maximum length of ${MAX_NOTE_LENGTH} characters (got ${clean.length}).`, {
+      field: 'text'
+    });
+  }
+  return clean;
+}
+
+function validateNoteAudience(audience = 0) {
+  if (audience === 0 || audience === '0' || audience === 'mutual' || audience === 'mutual_followers' || audience === 'followers') {
+    return 0;
+  }
+  if (audience === 1 || audience === '1' || audience === 'close_friends' || audience === 'close') {
+    return 1;
+  }
+  return 0;
+}
+
 module.exports = {
   validateConfig,
   validateThreadId,
@@ -200,8 +229,12 @@ module.exports = {
   validateUsername,
   validateSearchQuery,
   validateTextMessage,
+  validateNoteText,
+  validateNoteAudience,
   validateMediaFile,
   SUPPORTED_IMAGE_EXTENSIONS,
   SUPPORTED_VIDEO_EXTENSIONS,
-  SUPPORTED_AUDIO_EXTENSIONS
+  SUPPORTED_AUDIO_EXTENSIONS,
+  MAX_NOTE_LENGTH,
+  NOTE_AUDIENCES
 };
