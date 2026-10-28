@@ -1,5 +1,5 @@
 {
-  "name": "instachat-api",
+  "name": "instagram-chat-api",
   "version": "1.0.0",
   "description": "Lightweight, modular, zero-browser-overhead Instagram Direct Web Messaging API for Node.js",
   "main": "src/index.js",
@@ -8,6 +8,14 @@
     "LICENSE",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jarif098/instagram-chat-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jarif098/instagram-chat-api/issues"
+  },
+  "homepage": "https://github.com/jarif098/instagram-chat-api#readme",
   "keywords": [
     "instagram",
     "direct-messages",
