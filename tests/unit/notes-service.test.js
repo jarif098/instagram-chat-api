@@ -275,3 +275,55 @@ test('InstaChatClient: exposes NotesService methods and audience constants on fa
 
   assert.ok(client.notes instanceof NotesService);
 });
+
+test('NotesService: handles Meta mobile session restriction gracefully', async () => {
+  const failData = {
+    message: "We're sorry, but something went wrong. Please try again.",
+    status_code: '200',
+    status: 'fail'
+  };
+
+  const mockTransport = {
+    get: async () => ({ data: failData }),
+    post: async () => ({ data: failData })
+  };
+
+  const service = new NotesService({
+    transport: mockTransport,
+    session: { userId: '100', getCsrfToken: () => 'csrf' }
+  });
+
+  // 1. getNotes should not crash, returns empty notes array
+  const { notes } = await service.getNotes();
+  assert.equal(notes.length, 0);
+
+  // 2. createNote should throw descriptive MOBILE_SESSION_REQUIRED error
+  await assert.rejects(
+    async () => service.createNote('Hello note'),
+    (err) => {
+      assert.equal(err.code, 'MOBILE_SESSION_REQUIRED');
+      assert.ok(err.message.includes('mobile app sessions'));
+      return true;
+    }
+  );
+
+  // 3. deleteNote should throw descriptive MOBILE_SESSION_REQUIRED error
+  await assert.rejects(
+    async () => service.deleteNote('12345'),
+    (err) => {
+      assert.equal(err.code, 'MOBILE_SESSION_REQUIRED');
+      assert.ok(err.message.includes('mobile app sessions'));
+      return true;
+    }
+  );
+
+  // 4. likeNote should throw descriptive MOBILE_SESSION_REQUIRED error
+  await assert.rejects(
+    async () => service.likeNote('12345'),
+    (err) => {
+      assert.equal(err.code, 'MOBILE_SESSION_REQUIRED');
+      assert.ok(err.message.includes('mobile app sessions'));
+      return true;
+    }
+  );
+});

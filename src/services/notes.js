@@ -45,6 +45,30 @@ class NotesService {
   }
 
   /**
+   * Translates Meta internal failure responses into descriptive errors.
+   *
+   * @private
+   * @param {Object} [data]
+   * @param {string} [defaultMsg]
+   */
+  _handleNoteApiError(data, defaultMsg) {
+    const rawMsg = data && data.message ? String(data.message) : '';
+    const isMobileSessionError =
+      rawMsg.toLowerCase().includes('something went wrong') ||
+      rawMsg.toLowerCase().includes("we're sorry") ||
+      (data && data.status === 'fail' && !rawMsg);
+
+    if (isMobileSessionError) {
+      throw new InstaChatError(
+        'Instagram Notes are restricted by Meta to official mobile app sessions. ' +
+        'Sessions extracted from Instagram Web browser cookies cannot create or modify Notes on Instagram servers.',
+        { details: data, code: 'MOBILE_SESSION_REQUIRED' }
+      );
+    }
+    throw new InstaChatError(rawMsg || defaultMsg, { details: data });
+  }
+
+  /**
    * Retrieves active Direct Notes currently visible in the inbox tray.
    *
    * @param {Object} [options]
@@ -63,14 +87,34 @@ class NotesService {
       if (this.logger && typeof this.logger.debug === 'function') {
         this.logger.debug(`NOTES_GET primary failed (${err.message}), trying web fallback...`);
       }
-      response = await this.transport.get(Endpoints.NOTES_GET_WEB, {
-        headers: {
-          Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+      try {
+        response = await this.transport.get(Endpoints.NOTES_GET_WEB, {
+          headers: {
+            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+          }
+        });
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof AuthenticationError || fallbackErr instanceof RateLimitError) throw fallbackErr;
+        if (this.logger && typeof this.logger.warn === 'function') {
+          this.logger.warn(`Failed to fetch notes inbox tray: ${fallbackErr.message}`);
         }
-      });
+        return { notes: [], raw: fallbackErr.details || {} };
+      }
     }
 
     const data = response.data || {};
+    if (data.status === 'fail') {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn(
+          'Instagram Notes inbox tray returned status: fail. Notes are restricted by Meta to mobile app sessions; web browser sessions cannot access the Notes tray.'
+        );
+      }
+      return {
+        notes: [],
+        raw: data
+      };
+    }
+
     const rawItems = Array.isArray(data.items)
       ? data.items
       : Array.isArray(data.notes)
@@ -165,25 +209,37 @@ class NotesService {
       );
     } catch (err) {
       if (err instanceof AuthenticationError || err instanceof RateLimitError) throw err;
+      const msg = err.message || '';
+      if (
+        msg.toLowerCase().includes('something went wrong') ||
+        msg.toLowerCase().includes("we're sorry")
+      ) {
+        this._handleNoteApiError(err.details || { message: msg }, 'Failed to create note.');
+      }
       if (this.logger && typeof this.logger.debug === 'function') {
         this.logger.debug(`NOTES_CREATE primary failed (${err.message}), retrying web fallback...`);
       }
-      response = await this.transport.post(
-        Endpoints.NOTES_CREATE_WEB,
-        payload.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
-        },
-        false
-      );
+      try {
+        response = await this.transport.post(
+          Endpoints.NOTES_CREATE_WEB,
+          payload.toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+            }
+          },
+          false
+        );
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof AuthenticationError || fallbackErr instanceof RateLimitError) throw fallbackErr;
+        this._handleNoteApiError(fallbackErr.details || { message: fallbackErr.message }, 'Failed to create note.');
+      }
     }
 
     const data = response.data || {};
     if (data.status && data.status !== 'ok') {
-      throw new InstaChatError(data.message || 'Failed to create note.', { details: data });
+      this._handleNoteApiError(data, 'Failed to create note.');
     }
 
     const rawNote = data.note || data.item || data;
@@ -249,25 +305,37 @@ class NotesService {
       );
     } catch (err) {
       if (err instanceof AuthenticationError || err instanceof RateLimitError) throw err;
+      const msg = err.message || '';
+      if (
+        msg.toLowerCase().includes('something went wrong') ||
+        msg.toLowerCase().includes("we're sorry")
+      ) {
+        this._handleNoteApiError(err.details || { message: msg }, `Failed to delete note ${targetId}`);
+      }
       if (this.logger && typeof this.logger.debug === 'function') {
         this.logger.debug(`NOTES_DELETE primary failed (${err.message}), retrying web fallback...`);
       }
-      response = await this.transport.post(
-        Endpoints.NOTES_DELETE_WEB,
-        payload.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-          }
-        },
-        false
-      );
+      try {
+        response = await this.transport.post(
+          Endpoints.NOTES_DELETE_WEB,
+          payload.toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+            }
+          },
+          false
+        );
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof AuthenticationError || fallbackErr instanceof RateLimitError) throw fallbackErr;
+        this._handleNoteApiError(fallbackErr.details || { message: fallbackErr.message }, `Failed to delete note ${targetId}`);
+      }
     }
 
     const data = response.data || {};
     if (data.status && data.status !== 'ok') {
-      throw new InstaChatError(data.message || `Failed to delete note ${targetId}`, { details: data });
+      this._handleNoteApiError(data, `Failed to delete note ${targetId}`);
     }
 
     if (this.logger && typeof this.logger.info === 'function') {
@@ -299,19 +367,29 @@ class NotesService {
       payload.append('_csrftoken', csrfToken);
     }
 
-    const response = await this.transport.post(
-      Endpoints.NOTE_LIKE(cleanId),
-      payload.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-        }
-      },
-      false
-    );
+    let response;
+    try {
+      response = await this.transport.post(
+        Endpoints.NOTE_LIKE(cleanId),
+        payload.toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+          }
+        },
+        false
+      );
+    } catch (err) {
+      if (err instanceof AuthenticationError || err instanceof RateLimitError) throw err;
+      this._handleNoteApiError(err.details || { message: err.message }, `Failed to like note ${cleanId}`);
+    }
 
     const data = response.data || {};
+    if (data.status && data.status !== 'ok') {
+      this._handleNoteApiError(data, `Failed to like note ${cleanId}`);
+    }
+
     return {
       success: true,
       noteId: cleanId,
@@ -339,19 +417,28 @@ class NotesService {
       payload.append('_csrftoken', csrfToken);
     }
 
-    const response = await this.transport.post(
-      Endpoints.NOTE_UNLIKE(cleanId),
-      payload.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Referer: `${Endpoints.BASE_URL}/direct/inbox/`
-        }
-      },
-      false
-    );
+    let response;
+    try {
+      response = await this.transport.post(
+        Endpoints.NOTE_UNLIKE(cleanId),
+        payload.toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Referer: `${Endpoints.BASE_URL}/direct/inbox/`
+          }
+        },
+        false
+      );
+    } catch (err) {
+      if (err instanceof AuthenticationError || err instanceof RateLimitError) throw err;
+      this._handleNoteApiError(err.details || { message: err.message }, `Failed to unlike note ${cleanId}`);
+    }
 
     const data = response.data || {};
+    if (data.status && data.status !== 'ok') {
+      this._handleNoteApiError(data, `Failed to unlike note ${cleanId}`);
+    }
     return {
       success: true,
       noteId: cleanId,

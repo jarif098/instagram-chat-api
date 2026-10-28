@@ -72,7 +72,7 @@ Interacting with Instagram via private internal endpoints (`direct_v2`) is subje
 | **Get User Profile (Username / ID)** | Supported | `GET /api/v1/users/web_profile_info/` & `/users/{id}/info/` | Bio, counts, HD avatar, verification & privacy |
 | **Search Users** | Supported | `GET /api/v1/web/search/topsearch/` | Global user & handle discovery |
 | **Friendship Status & Follow/Unfollow** | Supported | `GET/POST /api/v1/friendships/...` | Single/batch status, follow, unfollow, followers/following |
-| **Instagram Direct Notes (Get / Post / Delete / Like / Reply)** | Supported | `GET/POST /api/v1/notes/...` | Full 24h status notes, audience scope (mutual/close friends), like, and DM replies |
+| **Instagram Direct Notes (Get / Post / Delete / Like / Reply)** | Supported | `GET/POST /api/v1/notes/...` | Full 24h status notes client implementation. *(Note: Meta restricts Notes endpoints to mobile app sessions; web browser sessions are rejected by Instagram's servers).* |
 | **Realtime Incoming Messages** | Supported | Adaptive Polling (with Deduplication) | Reliable, zero binary deps, configurable interval |
 | **Realtime MQTT WebSocket** | Unsupported | `wss://edge-chat.instagram.com/chat` | Proprietary binary Thrift protocol; high breakage risk |
 | **End-to-End Encrypted (E2EE)** | Blocked | Meta Signal E2EE Threads | E2EE chats require device-level keys not exposed via web REST |
@@ -336,6 +336,10 @@ await client.votePoll(group.id, poll.pollId, ['0']);
 ```
 
 ### 7. Managing Instagram Direct Notes
+
+> [!IMPORTANT]
+> **Meta Platform Restriction on Notes:**
+> Instagram Notes is an internal mobile-only feature. While `instachat-api` provides a complete client implementation (`createNote`, `getNotes`, `deleteNote`, `likeNote`, `replyToNote`), Meta's backend enforces mobile app device attestation. If your account session is established from Instagram Web browser cookies (`instagram.com`), Meta will reject note creation or updates with an internal error (`MOBILE_SESSION_REQUIRED`).
 
 ```javascript
 const { NoteAudience } = require('instachat-api');
