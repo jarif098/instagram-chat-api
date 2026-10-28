@@ -105,6 +105,22 @@ class HttpTransport {
     const location = headers && (headers.location || headers.Location);
     const isLoginRedirect = location && location.includes('/accounts/login/');
 
+    // Account verification / challenge redirect (auth_platform, challenge, checkpoint)
+    if (
+      location &&
+      (location.includes('/auth_platform/') || location.includes('/challenge/') || location.includes('/checkpoint/'))
+    ) {
+      return new AuthenticationError(
+        'Instagram requires account verification (security checkpoint). Open instagram.com in your browser while logged in, complete the verification, then re-export cookie.json.',
+        {
+          code: 'CHECKPOINT_REQUIRED',
+          checkpointRequired: true,
+          checkpointUrl: location,
+          status
+        }
+      );
+    }
+
     // Logged-out / Unauthenticated web detection
     // Instagram returns a 404 HTML page ("Page Not Found" / not-logged-in) on direct_v2 endpoints when cookies are invalid or missing sessionid.
     const isDirectApi = config && config.url && config.url.includes('/api/v1/direct_v2/');
