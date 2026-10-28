@@ -427,31 +427,6 @@ try {
 
 ---
 
-## 🧪 Testing
-
-The library uses Node.js's native test runner (`node:test`) with zero external testing dependencies.
-
-```bash
-# Run unit tests
-npm test
-
-# Run conditional live integration tests
-npm run test:integration
-```
-
-All 68 unit tests mock network boundaries and validate:
-- Configuration and schema validation
-- Session loading, cookie parsing, rotation, and persistence
-- Response normalization for users, messages, reactions, replies, mentions, shares, notes, and threads
-- Group management, message actions (edit/pin/forward), nicknames, moderation, sharing, and GraphQL/REST parity
-- Instagram Direct Notes tray fetching, creating (mutual & close friends), deleting, liking, and DM replies
-- Media file validation (size limits, extensions, MIME types)
-- Resilient exponential backoff retry logic and non-idempotent guards
-- Sliding-window message deduplication, edit/unsend/read-receipt detection, and baseline initialization
-- Automated secret and token redaction across loggers and crash dumps
-
----
-
 ## 📂 Project Structure
 
 ```text
@@ -497,15 +472,6 @@ Project_Instagram/
 │   ├── send-media.js             # Uploading images, videos, and audio example
 │   ├── notes.js                  # Viewing, posting, and deleting Instagram Notes
 │   └── listen-messages.js        # Realtime event listener example
-├── tests/
-│   ├── unit/                     # 69 Comprehensive unit tests
-│   └── integration/              # Controlled conditional live tests
-├── docs/
-│   ├── protocol-research.md      # Detailed protocol analysis of direct_v2
-│   ├── authentication.md         # Comprehensive authentication architecture guide
-│   ├── feature-compatibility.md  # Detailed feature compatibility matrix
-│   └── known-limitations.md      # Known platform limitations & security guide
-├── config.example.json           # Template configuration file
 ├── .gitignore                    # Git ignore excluding sessions, logs & node_modules
 ├── package.json                  # Production package definition (zero browser deps)
 └── README.md                     # Project documentation

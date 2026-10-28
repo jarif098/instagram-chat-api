@@ -1,9 +1,0 @@
-{
-  "sessionPath": "./data/session.json",
-  "pollIntervalMs": 3000,
-  "requestTimeoutMs": 15000,
-  "maxRetries": 3,
-  "retryDelayMs": 1000,
-  "debug": false,
-  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-}

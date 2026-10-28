@@ -6,14 +6,8 @@
   "files": [
     "src",
     "LICENSE",
-    "README.md",
-    "config.example.json"
+    "README.md"
   ],
-  "scripts": {
-    "test": "node --test tests/unit/*.test.js",
-    "test:unit": "node --test tests/unit/*.test.js",
-    "test:integration": "node --test tests/integration/*.test.js"
-  },
   "keywords": [
     "instagram",
     "direct-messages",
@@ -26,7 +20,8 @@
     "instagram-bot",
     "dm-bot",
     "chat-theme",
-    "realtime"
+    "realtime",
+    "notes"
   ],
   "author": "JARiF",
   "license": "MIT",
