@@ -101,33 +101,29 @@ npm install
 
 Instagram Web uses cookie-based authentication (`sessionid`, `csrftoken`, `ds_user_id`). Direct headless username/password submissions trigger automated bot challenges (reCAPTCHA v2/Enterprise, device integrity checks).
 
-### Method A: Interactive Session Extractor (Recommended for Setup)
+### 1. Exporting Session Cookies
 
-A standalone setup tool is provided in the `research/` directory:
+The safest and most reliable way to authenticate without triggering bot checkpoints is by using active browser session cookies (`sessionid`, `csrftoken`, `ds_user_id`):
 
-1. Navigate to `research/` and install its standalone dependencies:
-   ```bash
-   cd research
-   npm install
-   npm run extract-session
-   ```
-2. A Chromium window opens to Instagram's login page.
-3. Log in normally, solve any Two-Factor Authentication (2FA/SMS) or verification checkpoints.
-4. Once you reach your direct inbox or feed, the extractor automatically captures the authorized session tokens and writes them securely to `data/session.json`.
-5. The browser closes. You can now run the production library completely browser-free!
+- **Option A (Browser Extension):** Install [Cookie-Editor](https://cookie-editor.com/) in Chrome or Firefox, go to `instagram.com`, click **Export -> Export as JSON**, and save it as `cookie.json` in your project root.
+- **Option B (Browser DevTools):** Open Instagram in your browser -> Press `F12` -> Go to **Application** -> **Cookies** -> `https://www.instagram.com` -> Copy `sessionid`, `csrftoken`, and `ds_user_id`.
 
-### Method B: Manual Cookie Import
-
-You can copy cookies directly from your web browser's Developer Tools (Application -> Cookies -> `instagram.com`):
+### 2. Loading Session in Code
 
 ```javascript
 const { InstaChatClient } = require('instachat-api');
 
+// Method 1: Load from cookie.json / session.json file (Recommended)
+const client = new InstaChatClient({
+  sessionPath: './cookie.json'
+});
+
+// Method 2: Pass cookies directly in code or environment variables
 const client = new InstaChatClient({
   cookies: {
-    sessionid: 'YOUR_SESSION_ID',
-    csrftoken: 'YOUR_CSRF_TOKEN',
-    ds_user_id: 'YOUR_NUMERIC_USER_ID'
+    sessionid: process.env.IG_SESSION_ID,
+    csrftoken: process.env.IG_CSRF_TOKEN,
+    ds_user_id: process.env.IG_USER_ID
   }
 });
 ```
@@ -494,11 +490,6 @@ Project_Instagram/
 │   └── constants/
 │       ├── events.js             # Event constants
 │       └── endpoints.js          # Instagram Web direct_v2 endpoints
-├── research/
-│   ├── README.md                 # Protocol research documentation & instructions
-│   ├── package.json              # Standalone dependencies (Puppeteer)
-│   ├── session-extractor.js      # Interactive Chromium tool for safe login & extraction
-│   └── network-inspector.js      # Live network traffic sniffer for reverse engineering
 ├── examples/
 │   ├── login.js                  # Authentication and health check example
 │   ├── conversations.js          # Fetching and paginating inbox example
@@ -507,7 +498,7 @@ Project_Instagram/
 │   ├── notes.js                  # Viewing, posting, and deleting Instagram Notes
 │   └── listen-messages.js        # Realtime event listener example
 ├── tests/
-│   ├── unit/                     # 68 Comprehensive unit tests
+│   ├── unit/                     # 69 Comprehensive unit tests
 │   └── integration/              # Controlled conditional live tests
 ├── docs/
 │   ├── protocol-research.md      # Detailed protocol analysis of direct_v2
