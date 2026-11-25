@@ -1,10 +1,12 @@
 'use strict';
 
+const crypto = require('crypto');
 const Endpoints = require('../constants/endpoints');
 const User = require('../models/user');
 const {
   validateUserId,
   validateUsername,
+  validateUserIdentifier,
   validateSearchQuery
 } = require('../utils/validators');
 const {
@@ -15,11 +17,83 @@ const {
   InstaChatError
 } = require('../utils/errors');
 
+const MOBILE_APP_ID = '567067343352427';
+const MOBILE_USER_AGENT =
+  'Instagram 449.0.0.52.84 Android (34/14; 480dpi; 1344x2992; Google/google; Pixel 8 Pro; husky; husky; en_US; 1079242191)';
+
 class UsersService {
   constructor(options = {}) {
     this.transport = options.transport;
     this.session = options.session;
     this.logger = options.logger;
+    this._deviceId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+    this._phoneId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  }
+
+  /**
+   * Resolves a numeric user ID, @username, profile URL, or User object to a numeric user ID.
+   *
+   * @param {string|number|Object} userIdOrUsername
+   * @returns {Promise<{userId: string, username: string|null}>}
+   */
+  async resolveTargetUser(userIdOrUsername) {
+    const parsed = validateUserIdentifier(userIdOrUsername);
+    if (parsed.type === 'id') {
+      return { userId: parsed.value, username: parsed.username || null };
+    }
+    const profile = await this.getUserByUsername(parsed.value);
+    if (!profile || !profile.id) {
+      throw new NotFoundError(`Instagram user "@${parsed.value}" was not found.`);
+    }
+    return {
+      userId: String(profile.id),
+      username: profile.username || parsed.value
+    };
+  }
+
+  /**
+   * Builds mobile private API fallback headers using Bearer IGT:2 derived from the session cookie.
+   *
+   * @private
+   * @param {Object} [extraHeaders={}]
+   * @returns {Object}
+   */
+  _buildMobileHeaders(extraHeaders = {}) {
+    const cookies = (this.session && this.session.cookies) || {};
+    const rawSessionId = cookies.sessionid ? String(cookies.sessionid) : '';
+    const decodedSessionId = rawSessionId ? decodeURIComponent(rawSessionId) : '';
+    const userId = String(
+      (this.session && this.session.userId) ||
+        cookies.ds_user_id ||
+        (decodedSessionId ? decodedSessionId.split(':')[0] : '') ||
+        '0'
+    );
+    const androidId =
+      'android-' + crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+
+    const headers = {
+      'User-Agent': MOBILE_USER_AGENT,
+      'x-ig-app-id': MOBILE_APP_ID,
+      'X-IG-App-ID': MOBILE_APP_ID,
+      'X-IG-Device-ID': this._deviceId,
+      'X-IG-Family-Device-ID': this._phoneId,
+      'X-IG-Android-ID': androidId,
+      'X-IG-Capabilities': '3brTv10=',
+      'X-IG-Connection-Type': 'WIFI',
+      'IG-INTENDED-USER-ID': userId,
+      'IG-U-DS-USER-ID': userId
+    };
+
+    if (decodedSessionId) {
+      const authData = {
+        ds_user_id: userId,
+        sessionid: decodedSessionId,
+        should_use_header_over_cookies: true
+      };
+      headers.Authorization = `Bearer IGT:2:${Buffer.from(JSON.stringify(authData)).toString('base64')}`;
+    }
+
+    return { ...headers, ...extraHeaders };
   }
 
   /**
@@ -171,11 +245,11 @@ class UsersService {
   /**
    * Retrieves the relationship / friendship status between the authenticated user and target user.
    *
-   * @param {string|number} userId - Target Instagram user ID
+   * @param {string|number|Object} userIdOrUsername - Target Instagram user ID, @username, or profile URL
    * @returns {Promise<Object>}
    */
-  async getFriendshipStatus(userId) {
-    const validUserId = validateUserId(userId);
+  async getFriendshipStatus(userIdOrUsername) {
+    const { userId: validUserId } = await this.resolveTargetUser(userIdOrUsername);
     const response = await this.transport.get(Endpoints.FRIENDSHIP_STATUS(validUserId));
     return this._normalizeFriendshipStatus(validUserId, response.data || {});
   }
@@ -225,32 +299,87 @@ class UsersService {
   }
 
   /**
-   * Follows a target user (or sends a follow request if the target account is private).
+   * Follows a target user by numeric user ID, @username, profile URL, or User object
+   * (or sends a follow request if the target account is private).
+   * Tries primary friendships/create, web/friendships/follow, and mobile fallback.
    *
-   * @param {string|number} userId - Target Instagram user ID
-   * @returns {Promise<{success: boolean, userId: string, friendshipStatus: Object}>}
+   * @param {string|number|Object} userIdOrUsername - Target Instagram user ID, @username, or profile URL
+   * @param {Object} [options]
+   * @param {string} [options.containerModule='profile']
+   * @returns {Promise<{success: boolean, userId: string, username: string|null, following: boolean, requested: boolean, friendshipStatus: Object}>}
    */
-  async followUser(userId) {
-    const validUserId = validateUserId(userId);
-    const csrfToken = this.session ? this.session.getCsrfToken() : '';
+  async followUser(userIdOrUsername, options = {}) {
+    const { userId: validUserId, username } = await this.resolveTargetUser(userIdOrUsername);
+    const csrfToken = this.session && typeof this.session.getCsrfToken === 'function'
+      ? this.session.getCsrfToken()
+      : '';
+    const containerModule = options.containerModule || 'profile';
 
     const payload = new URLSearchParams();
     payload.append('user_id', validUserId);
-    payload.append('container_module', 'profile');
+    payload.append('container_module', containerModule);
     if (csrfToken) {
       payload.append('_csrftoken', csrfToken);
     }
+    const bodyStr = payload.toString();
 
-    const response = await this.transport.post(
-      Endpoints.FRIENDSHIP_FOLLOW(validUserId),
-      payload.toString(),
+    const referer = username
+      ? `${Endpoints.BASE_URL}/${username}/`
+      : `${Endpoints.BASE_URL}/`;
+
+    const attempts = [
       {
+        url: Endpoints.FRIENDSHIP_FOLLOW(validUserId),
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: referer
         }
       },
-      false
-    );
+      {
+        url: Endpoints.WEB_FOLLOW_USER(validUserId),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: referer
+        }
+      },
+      {
+        url: Endpoints.FRIENDSHIP_FOLLOW_MOBILE(validUserId),
+        headers: this._buildMobileHeaders({
+          'Content-Type': 'application/x-www-form-urlencoded'
+        })
+      }
+    ];
+
+    let response = null;
+    let lastError = null;
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+      try {
+        response = await this.transport.post(
+          attempt.url,
+          bodyStr,
+          { headers: attempt.headers },
+          false
+        );
+        break;
+      } catch (err) {
+        if (
+          err instanceof AuthenticationError ||
+          err instanceof RateLimitError ||
+          err instanceof NotFoundError
+        ) {
+          throw err;
+        }
+        lastError = err;
+        if (this.logger && typeof this.logger.debug === 'function') {
+          this.logger.debug(`Follow attempt ${i + 1} (${attempt.url}) failed: ${err.message}`);
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError || new InstaChatError(`Failed to follow user ${validUserId}`);
+    }
 
     const data = response.data || {};
     if (data.status && data.status !== 'ok') {
@@ -264,43 +393,113 @@ class UsersService {
       outgoing_request: data.result === 'requested'
     };
 
+    const friendshipStatus = this._normalizeFriendshipStatus(
+      validUserId,
+      data.friendship_status || fallbackRaw
+    );
+
     return {
       success: true,
       userId: validUserId,
-      friendshipStatus: this._normalizeFriendshipStatus(
-        validUserId,
-        data.friendship_status || fallbackRaw
-      )
+      username,
+      following: friendshipStatus.following,
+      requested: friendshipStatus.outgoingRequest,
+      friendshipStatus
     };
   }
 
   /**
-   * Unfollows a target user (or cancels a pending outgoing follow request).
+   * Shorthand alias for followUser().
    *
-   * @param {string|number} userId - Target Instagram user ID
-   * @returns {Promise<{success: boolean, userId: string, friendshipStatus: Object}>}
+   * @param {string|number|Object} userIdOrUsername
+   * @param {Object} [options]
    */
-  async unfollowUser(userId) {
-    const validUserId = validateUserId(userId);
-    const csrfToken = this.session ? this.session.getCsrfToken() : '';
+  async follow(userIdOrUsername, options = {}) {
+    return this.followUser(userIdOrUsername, options);
+  }
+
+  /**
+   * Unfollows a target user by numeric user ID, @username, profile URL, or User object
+   * (or cancels a pending outgoing follow request).
+   * Tries primary friendships/destroy, web/friendships/unfollow, and mobile fallback.
+   *
+   * @param {string|number|Object} userIdOrUsername - Target Instagram user ID, @username, or profile URL
+   * @param {Object} [options]
+   * @param {string} [options.containerModule='profile']
+   * @returns {Promise<{success: boolean, userId: string, username: string|null, following: boolean, friendshipStatus: Object}>}
+   */
+  async unfollowUser(userIdOrUsername, options = {}) {
+    const { userId: validUserId, username } = await this.resolveTargetUser(userIdOrUsername);
+    const csrfToken = this.session && typeof this.session.getCsrfToken === 'function'
+      ? this.session.getCsrfToken()
+      : '';
+    const containerModule = options.containerModule || 'profile';
 
     const payload = new URLSearchParams();
     payload.append('user_id', validUserId);
-    payload.append('container_module', 'profile');
+    payload.append('container_module', containerModule);
     if (csrfToken) {
       payload.append('_csrftoken', csrfToken);
     }
+    const bodyStr = payload.toString();
 
-    const response = await this.transport.post(
-      Endpoints.FRIENDSHIP_UNFOLLOW(validUserId),
-      payload.toString(),
+    const referer = username
+      ? `${Endpoints.BASE_URL}/${username}/`
+      : `${Endpoints.BASE_URL}/`;
+
+    const attempts = [
       {
+        url: Endpoints.FRIENDSHIP_UNFOLLOW(validUserId),
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: referer
         }
       },
-      false
-    );
+      {
+        url: Endpoints.WEB_UNFOLLOW_USER(validUserId),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: referer
+        }
+      },
+      {
+        url: Endpoints.FRIENDSHIP_UNFOLLOW_MOBILE(validUserId),
+        headers: this._buildMobileHeaders({
+          'Content-Type': 'application/x-www-form-urlencoded'
+        })
+      }
+    ];
+
+    let response = null;
+    let lastError = null;
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+      try {
+        response = await this.transport.post(
+          attempt.url,
+          bodyStr,
+          { headers: attempt.headers },
+          false
+        );
+        break;
+      } catch (err) {
+        if (
+          err instanceof AuthenticationError ||
+          err instanceof RateLimitError ||
+          err instanceof NotFoundError
+        ) {
+          throw err;
+        }
+        lastError = err;
+        if (this.logger && typeof this.logger.debug === 'function') {
+          this.logger.debug(`Unfollow attempt ${i + 1} (${attempt.url}) failed: ${err.message}`);
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError || new InstaChatError(`Failed to unfollow user ${validUserId}`);
+    }
 
     const data = response.data || {};
     if (data.status && data.status !== 'ok') {
@@ -309,24 +508,73 @@ class UsersService {
       });
     }
 
+    const friendshipStatus = this._normalizeFriendshipStatus(
+      validUserId,
+      data.friendship_status || { following: false, outgoing_request: false }
+    );
+
     return {
       success: true,
       userId: validUserId,
-      friendshipStatus: this._normalizeFriendshipStatus(
-        validUserId,
-        data.friendship_status || { following: false, outgoing_request: false }
-      )
+      username,
+      following: friendshipStatus.following,
+      friendshipStatus
+    };
+  }
+
+  /**
+   * Shorthand alias for unfollowUser().
+   *
+   * @param {string|number|Object} userIdOrUsername
+   * @param {Object} [options]
+   */
+  async unfollow(userIdOrUsername, options = {}) {
+    return this.unfollowUser(userIdOrUsername, options);
+  }
+
+  /**
+   * Checks whether the authenticated account currently follows the target user.
+   *
+   * @param {string|number|Object} userIdOrUsername
+   * @returns {Promise<boolean>}
+   */
+  async isFollowing(userIdOrUsername) {
+    const status = await this.getFriendshipStatus(userIdOrUsername);
+    return Boolean(status && status.following);
+  }
+
+  /**
+   * Toggles follow state for a target user: unfollows if currently following (or requested), otherwise follows.
+   *
+   * @param {string|number|Object} userIdOrUsername
+   * @param {Object} [options]
+   * @returns {Promise<{action: 'followed'|'requested'|'unfollowed', success: boolean, userId: string, username: string|null, following: boolean, friendshipStatus: Object}>}
+   */
+  async toggleFollow(userIdOrUsername, options = {}) {
+    const resolved = await this.resolveTargetUser(userIdOrUsername);
+    const status = await this.getFriendshipStatus(resolved.userId);
+
+    if (status.following || status.outgoingRequest) {
+      const res = await this.unfollowUser(resolved.userId, options);
+      return { ...res, username: res.username || resolved.username, action: 'unfollowed' };
+    }
+
+    const res = await this.followUser(resolved.userId, options);
+    return {
+      ...res,
+      username: res.username || resolved.username,
+      action: res.requested ? 'requested' : 'followed'
     };
   }
 
   /**
    * Removes a user from the authenticated account's followers list.
    *
-   * @param {string|number} userId - Follower's Instagram user ID
+   * @param {string|number|Object} userIdOrUsername - Follower's Instagram user ID or @username
    * @returns {Promise<{success: boolean, userId: string, friendshipStatus: Object}>}
    */
-  async removeFollower(userId) {
-    const validUserId = validateUserId(userId);
+  async removeFollower(userIdOrUsername) {
+    const { userId: validUserId } = await this.resolveTargetUser(userIdOrUsername);
     const csrfToken = this.session ? this.session.getCsrfToken() : '';
 
     const payload = new URLSearchParams();
@@ -366,15 +614,15 @@ class UsersService {
   /**
    * Retrieves followers of a target user with cursor pagination.
    *
-   * @param {string|number} userId - Target Instagram user ID
+   * @param {string|number|Object} userIdOrUsername - Target Instagram user ID or @username
    * @param {Object} [options]
    * @param {number} [options.count=20] - Results per page (1-100)
    * @param {string} [options.maxId] - Pagination cursor from previous response's nextMaxId
    * @param {string} [options.query] - Optional filter query within followers
    * @returns {Promise<{users: User[], nextMaxId: string|null, hasMore: boolean}>}
    */
-  async getFollowers(userId, options = {}) {
-    const validUserId = validateUserId(userId);
+  async getFollowers(userIdOrUsername, options = {}) {
+    const { userId: validUserId } = await this.resolveTargetUser(userIdOrUsername);
     const count = Math.min(Math.max(Number(options.count || options.limit) || 20, 1), 100);
     const params = {
       count,
@@ -405,15 +653,15 @@ class UsersService {
   /**
    * Retrieves accounts followed by a target user with cursor pagination.
    *
-   * @param {string|number} userId - Target Instagram user ID
+   * @param {string|number|Object} userIdOrUsername - Target Instagram user ID or @username
    * @param {Object} [options]
    * @param {number} [options.count=20] - Results per page (1-100)
    * @param {string} [options.maxId] - Pagination cursor from previous response's nextMaxId
    * @param {string} [options.query] - Optional filter query within following
    * @returns {Promise<{users: User[], nextMaxId: string|null, hasMore: boolean}>}
    */
-  async getFollowing(userId, options = {}) {
-    const validUserId = validateUserId(userId);
+  async getFollowing(userIdOrUsername, options = {}) {
+    const { userId: validUserId } = await this.resolveTargetUser(userIdOrUsername);
     const count = Math.min(Math.max(Number(options.count || options.limit) || 20, 1), 100);
     const params = { count };
 

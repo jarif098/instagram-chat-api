@@ -13,12 +13,42 @@ const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024; // 25MB
 const MAX_TEXT_LENGTH = 10000;
 const MAX_NOTE_LENGTH = 60;
+const MAX_CAPTION_LENGTH = 2200;
+const MAX_COMMENT_LENGTH = 2200;
 const MAX_SEARCH_QUERY_LENGTH = 150;
 const INSTAGRAM_USERNAME_REGEX = /^[a-zA-Z0-9._]{1,30}$/;
 
 const NOTE_AUDIENCES = Object.freeze({
   MUTUAL_FOLLOWERS: 0,
   CLOSE_FRIENDS: 1
+});
+
+const REACTION_ALIASES = Object.freeze({
+  like: '❤️',
+  heart: '❤️',
+  love: '❤️',
+  haha: '😂',
+  laugh: '😂',
+  joy: '😂',
+  wow: '😮',
+  sad: '😢',
+  cry: '😢',
+  angry: '😡',
+  fire: '🔥',
+  lit: '🔥',
+  clap: '👏',
+  thumbsup: '👍',
+  thumbs_up: '👍',
+  '+1': '👍',
+  thumbsdown: '👎',
+  thumbs_down: '👎',
+  '-1': '👎',
+  party: '🎉',
+  tada: '🎉',
+  '100': '💯',
+  eyes: '👀',
+  pray: '🙏',
+  skull: '💀'
 });
 
 function validateConfig(config = {}) {
@@ -221,14 +251,127 @@ function validateNoteAudience(audience = 0) {
   return 0;
 }
 
+/**
+ * Validates and normalizes an optional post/reel caption.
+ *
+ * @param {string} [caption='']
+ * @returns {string}
+ */
+function validateCaption(caption = '') {
+  if (caption === undefined || caption === null) return '';
+  if (typeof caption !== 'string') {
+    throw new ValidationError('Caption must be a string.', { field: 'caption' });
+  }
+  if (caption.length > MAX_CAPTION_LENGTH) {
+    throw new ValidationError(
+      `Caption exceeds maximum length of ${MAX_CAPTION_LENGTH} characters (got ${caption.length}).`,
+      { field: 'caption' }
+    );
+  }
+  return caption;
+}
+
+/**
+ * Validates a comment text string for posts and reels.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function validateCommentText(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new ValidationError('Comment text must be a non-empty string.', { field: 'text' });
+  }
+  const clean = text.trim();
+  if (clean.length > MAX_COMMENT_LENGTH) {
+    throw new ValidationError(
+      `Comment exceeds maximum length of ${MAX_COMMENT_LENGTH} characters (got ${clean.length}).`,
+      { field: 'text' }
+    );
+  }
+  return clean;
+}
+
+/**
+ * Validates and normalizes a reaction emoji or named reaction alias (e.g. "like", "fire", "❤️").
+ *
+ * @param {string} [emoji='❤️']
+ * @returns {string}
+ */
+function validateReactionEmoji(emoji = '❤️') {
+  if (typeof emoji !== 'string' || !emoji.trim()) {
+    throw new ValidationError('Emoji reaction must be a non-empty string.', { field: 'emoji' });
+  }
+  const trimmed = emoji.trim();
+  const alias = REACTION_ALIASES[trimmed.toLowerCase()];
+  return alias || trimmed;
+}
+
+/**
+ * Parses a user target that may be a numeric user ID, @username, username, profile URL, or User-like object.
+ *
+ * @param {string|number|Object} target
+ * @returns {{type: 'id'|'username', value: string, username: string|null}}
+ */
+function validateUserIdentifier(target) {
+  if (target && typeof target === 'object') {
+    const rawId = target.id || target.pk || target.userId || target.user_id;
+    const rawUsername = target.username ? String(target.username).trim().replace(/^@/, '').toLowerCase() : null;
+    if (rawId !== undefined && rawId !== null && String(rawId).trim()) {
+      return {
+        type: 'id',
+        value: validateUserId(rawId),
+        username: rawUsername
+      };
+    }
+    if (rawUsername) {
+      const cleanUser = validateUsername(rawUsername);
+      return { type: 'username', value: cleanUser, username: cleanUser };
+    }
+    throw new ValidationError('User target object must contain an id or username.', { field: 'userIdOrUsername' });
+  }
+
+  if (target === undefined || target === null || (typeof target !== 'string' && typeof target !== 'number')) {
+    throw new ValidationError('User target must be a numeric user ID, @username, or profile URL.', {
+      field: 'userIdOrUsername'
+    });
+  }
+
+  const raw = String(target).trim();
+  if (!raw) {
+    throw new ValidationError('User target cannot be empty.', { field: 'userIdOrUsername' });
+  }
+
+  // Numeric user ID
+  if (/^\d+$/.test(raw)) {
+    return { type: 'id', value: raw, username: null };
+  }
+
+  // Profile URL: https://www.instagram.com/username/
+  const urlMatch = raw.match(/instagram\.com\/([a-zA-Z0-9._]{1,30})(?:\/|\?|$)/i);
+  if (urlMatch && urlMatch[1]) {
+    const reserved = new Set(['p', 'reel', 'reels', 'tv', 'stories', 'explore', 'direct', 'accounts']);
+    if (!reserved.has(urlMatch[1].toLowerCase())) {
+      const cleanUser = validateUsername(urlMatch[1]);
+      return { type: 'username', value: cleanUser, username: cleanUser };
+    }
+  }
+
+  const cleanUser = validateUsername(raw);
+  return { type: 'username', value: cleanUser, username: cleanUser };
+}
+
 module.exports = {
   validateConfig,
   validateThreadId,
   validateMessageId,
   validateUserId,
   validateUsername,
+  validateUserIdentifier,
   validateSearchQuery,
   validateTextMessage,
+  validateCaption,
+  validateCommentText,
+  validateReactionEmoji,
   validateNoteText,
   validateNoteAudience,
   validateMediaFile,
@@ -236,5 +379,8 @@ module.exports = {
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_AUDIO_EXTENSIONS,
   MAX_NOTE_LENGTH,
-  NOTE_AUDIENCES
+  MAX_CAPTION_LENGTH,
+  MAX_COMMENT_LENGTH,
+  NOTE_AUDIENCES,
+  REACTION_ALIASES
 };

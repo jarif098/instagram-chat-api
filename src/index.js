@@ -11,6 +11,7 @@ const User = require('./models/user');
 const Message = require('./models/message');
 const Conversation = require('./models/conversation');
 const Note = require('./models/note');
+const Post = require('./models/post');
 const ConversationsService = require('./services/conversations');
 const ThreadsService = require('./services/threads');
 const MessagesService = require('./services/messages');
@@ -22,7 +23,8 @@ const ThemesService = require('./services/themes');
 const NicknamesService = require('./services/nicknames');
 const UsersService = require('./services/users');
 const NotesService = require('./services/notes');
-const { NOTE_AUDIENCES } = require('./utils/validators');
+const PostsService = require('./services/posts');
+const { NOTE_AUDIENCES, REACTION_ALIASES } = require('./utils/validators');
 
 module.exports = {
   InstaChatClient,
@@ -34,6 +36,7 @@ module.exports = {
   Message,
   Conversation,
   Note,
+  Post,
   ConversationsService,
   ThreadsService,
   MessagesService,
@@ -45,8 +48,10 @@ module.exports = {
   NicknamesService,
   UsersService,
   NotesService,
+  PostsService,
   NOTE_AUDIENCES,
   NoteAudience: NOTE_AUDIENCES,
+  REACTION_ALIASES,
   createSessionFromCookieString,
   createSessionFromCookies,
   Logger

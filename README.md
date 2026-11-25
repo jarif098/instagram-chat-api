@@ -36,7 +36,12 @@ Interacting with Instagram via private internal endpoints (`direct_v2`) is subje
   - Look up rich Instagram user profiles by `@username` or numeric User ID (bio, follower/following/post counts, HD profile picture, verification, privacy, business category, pronouns).
   - Search Instagram users globally by keyword or handle.
   - Inspect single or batch friendship statuses (`following`, `followedBy`, pending requests, close friends, restricted).
-  - Follow, unfollow, remove followers, paginate follower/following lists, manage incoming follow requests (list, approve, ignore), block/unblock, restrict/unrestrict, and mute/unmute posts & stories.
+  - Follow, unfollow, toggle follow, and check follow state by numeric user ID, `@username`, profile URL, or `User` object (`follow`, `unfollow`, `toggleFollow`, `isFollowing`), remove followers, paginate follower/following lists, manage incoming follow requests (list, approve, ignore), block/unblock, restrict/unrestrict, and mute/unmute posts & stories.
+- **Feed Posts, Carousels, Reels & Media Reactions API (`PostsService`):**
+  - Publish single-photo feed posts (`createPost` / `postPhoto`), 2–10 image carousels (`createCarouselPost` / `postCarousel`), and Reels (`createReel` / `postReel`) from local files, Buffers, Streams, or remote URLs, and delete posts (`deletePost`).
+  - Inspect any post or Reel by numeric media ID, shortcode, or URL (`getPost`, `getReel`), and paginate user posts & Reels (`getUserPosts`, `getUserReels`).
+  - React, like, unlike, comment, reply to comments, like comments, list likers/comments, and save/unsave Posts and Reels (`reactPost`, `unreactPost`, `likePost`, `unlikePost`, `reactReel`, `unreactReel`, `likeReel`, `unlikeReel`, `commentOnPost`, `commentOnReel`, `savePost`, `unsavePost`).
+  - Send heart likes and emoji quick reactions on Instagram Stories (`likeStory`, `unlikeStory`, `reactStory`).
 - **Instagram Direct Notes API:**
   - View active 24-hour status notes across mutual followers and close friends (`getNotes`).
   - Retrieve current viewer's active note (`getMyNote`) or search notes by username (`getNoteByUser`).
@@ -71,7 +76,10 @@ Interacting with Instagram via private internal endpoints (`direct_v2`) is subje
 | **Download Media** | Supported | Direct CDN Stream GET | Downloads photos and audio to disk |
 | **Get User Profile (Username / ID)** | Supported | `GET /api/v1/users/web_profile_info/` & `/users/{id}/info/` | Bio, counts, HD avatar, verification & privacy |
 | **Search Users** | Supported | `GET /api/v1/web/search/topsearch/` | Global user & handle discovery |
-| **Friendship Status & Follow/Unfollow** | Supported | `GET/POST /api/v1/friendships/...` | Single/batch status, follow, unfollow, followers/following |
+| **Friendship Status & Follow/Unfollow** | Supported | `GET/POST /api/v1/friendships/...` & `/api/v1/web/friendships/...` | Supports user ID, `@username`, profile URL; `follow`, `unfollow`, `toggleFollow`, `isFollowing` |
+| **Feed Posts & Carousels (Publish / Get / Delete)** | Supported | `/rupload_igphoto/` + `POST /api/v1/media/configure/` & `configure_sidecar/` | Single photos, 2–10 item carousels, captions, alt text, tags, pagination |
+| **Post & Reel Reactions (Like / React / Comment / Save)** | Supported | `POST /api/v1/web/likes/{id}/like/` & `/api/v1/media/{id}/like/` | Supports URLs/shortcodes/IDs, heart likes, DM reactions, emoji comments, saves & story reactions |
+| **Publish & Browse Reels** | Supported | `/rupload_igvideo/` + `POST /api/v1/media/configure_to_clips/` & `/api/v1/clips/user/` | Video + optional cover upload, user Reels pagination |
 | **Instagram Direct Notes (Get / Post / Delete / Like / Reply)** | Supported | `POST /graphql/query` (`InboxTrayRequest`) & `POST /api/v1/notes/...` | Full 24h status notes, music metadata, audience scope (mutual/close friends), like, and DM replies via `Bearer IGT:2` mobile protocol bridge |
 | **Realtime Incoming Messages** | Supported | Adaptive Polling (with Deduplication) | Reliable, zero binary deps, configurable interval |
 | **Realtime MQTT WebSocket** | Unsupported | `wss://edge-chat.instagram.com/chat` | Proprietary binary Thrift protocol; high breakage risk |
@@ -281,11 +289,13 @@ const matches = await client.searchUsers('photography', { limit: 10 });
 const status = await client.getFriendshipStatus(profile.id);
 const batchStatuses = await client.getFriendshipStatuses(['25025320', '123456789']);
 
-// Follow / Unfollow / Paginate followers & following
-await client.followUser(profile.id);
-await client.unfollowUser(profile.id);
-const { users: followers, nextMaxId } = await client.getFollowers(profile.id, { count: 20 });
-const { users: following } = await client.getFollowing(profile.id, { count: 20 });
+// Follow / Unfollow / Toggle Follow (accepts user ID, @username, profile URL, or User object)
+await client.follow('@instagram');
+await client.unfollow('https://www.instagram.com/instagram/');
+await client.toggleFollow(profile.id);
+const following = await client.isFollowing('@instagram');
+const { users: followers, nextMaxId } = await client.getFollowers('@instagram', { count: 20 });
+const { users: followingList } = await client.getFollowing(profile.id, { count: 20 });
 
 // Moderation & Follow Requests
 const { users: pendingReqs } = await client.getPendingFollowRequests();
@@ -367,6 +377,54 @@ await client.replyToNote(friendNote.id, 'Awesome choice of track!');
 
 // Delete your active note
 await client.deleteNote();
+```
+
+### 8. Feed Posts, Carousels, Reels & Post / Reel / Story Reactions
+
+```javascript
+// Publish a photo post (local path, Buffer, Readable stream, or HTTPS URL)
+const post = await client.createPost('./photos/sunset.jpg', {
+  caption: 'Golden hour 🌅 #photography',
+  altText: 'Sunset over the ocean'
+});
+
+// Publish a 2–10 photo carousel post
+const carousel = await client.createCarouselPost(
+  ['./photos/slide1.jpg', './photos/slide2.jpg'],
+  { caption: 'Swipe through! ➡️' }
+);
+
+// Publish an Instagram Reel (video + optional cover image)
+const reel = await client.createReel('./videos/clip.mp4', {
+  caption: 'New Reel 🎬',
+  coverImage: './photos/cover.jpg',
+  shareToFeed: true
+});
+
+// Inspect & paginate Posts and Reels
+const postInfo = await client.getPost('https://www.instagram.com/p/C8abc123XYZ/');
+const { posts } = await client.getUserPosts('@instagram', { count: 10 });
+const { reels } = await client.getUserReels('@instagram', { count: 10 });
+
+// React / Like / Unlike / Comment / Save Posts
+await client.reactPost(postInfo.url, '❤️'); // or client.likePost(...)
+await client.commentOnPost(postInfo.url, 'Amazing shot! 🔥');
+await client.savePost(postInfo.url);
+await client.unreactPost(postInfo.url);     // or client.unlikePost(...)
+
+// React to Reels (by Reel URL, shortcode, or numeric media ID)
+await client.reactReel('https://www.instagram.com/reel/C8abc123XYZ/', '❤️'); // Native heart like
+await client.reactReel('https://www.instagram.com/reel/C8abc123XYZ/', '🔥', { asComment: true }); // Like + emoji comment
+await client.reactReel('https://www.instagram.com/reel/C8abc123XYZ/', '😂', { threadId, messageId }); // Emoji react on Reel shared in DM
+await client.unreactReel('https://www.instagram.com/reel/C8abc123XYZ/');
+
+// React to DM messages (supports emoji or named aliases like 'fire', 'laugh', 'like')
+await client.react(threadId, messageId, 'fire');
+await client.unreact(threadId, messageId, '🔥');
+
+// Story heart likes & emoji quick reactions
+await client.likeStory(storyMediaId);
+await client.reactStory(storyMediaId, '🔥', { ownerId: '@friend_handle' });
 ```
 
 ---
@@ -451,12 +509,14 @@ Project_Instagram/
 │   │   ├── themes.js             # Chat theme catalog & switcher
 │   │   ├── nicknames.js          # Custom participant nicknames
 │   │   ├── users.js              # Profiles, search, friendships, follow requests & moderation
-│   │   └── notes.js              # 24h Direct Notes (get, post, delete, like, reply)
+│   │   ├── notes.js              # 24h Direct Notes (get, post, delete, like, reply)
+│   │   └── posts.js              # Feed posts, carousels, reels, post/reel/story reactions, comments & saves
 │   ├── models/
 │   │   ├── user.js               # Normalized user model
 │   │   ├── message.js            # Normalized message model
 │   │   ├── conversation.js       # Normalized thread model
-│   │   └── note.js               # Normalized note model
+│   │   ├── note.js               # Normalized note model
+│   │   └── post.js               # Normalized post & reel model
 │   ├── utils/
 │   │   ├── errors.js             # Typed error hierarchy
 │   │   ├── logger.js             # Sanitizing logger with secret redaction
@@ -471,6 +531,7 @@ Project_Instagram/
 │   ├── send-message.js           # Sending text, replying, and unsending example
 │   ├── send-media.js             # Uploading images, videos, and audio example
 │   ├── notes.js                  # Viewing, posting, and deleting Instagram Notes
+│   ├── posts-and-reels.js        # Follow/unfollow, message react, publishing posts/reels & post/reel react
 │   └── listen-messages.js        # Realtime event listener example
 ├── .gitignore                    # Git ignore excluding sessions, logs & node_modules
 ├── package.json                  # Production package definition (zero browser deps)

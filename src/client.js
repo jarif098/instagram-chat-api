@@ -18,6 +18,7 @@ const ThemesService = require('./services/themes');
 const NicknamesService = require('./services/nicknames');
 const UsersService = require('./services/users');
 const NotesService = require('./services/notes');
+const PostsService = require('./services/posts');
 const { Logger } = require('./utils/logger');
 const { validateConfig } = require('./utils/validators');
 const { AuthenticationError } = require('./utils/errors');
@@ -153,7 +154,16 @@ class InstaChatClient extends EventEmitter {
     this.reactions = new ReactionsService({
       transport: this.transport,
       session: this.session,
-      logger: this.logger
+      logger: this.logger,
+      conversationsService: this.conversations
+    });
+
+    this.posts = new PostsService({
+      transport: this.transport,
+      session: this.session,
+      logger: this.logger,
+      usersService: this.users,
+      reactionsService: this.reactions
     });
 
     this.readReceipts = new ReadReceiptsService({
@@ -565,12 +575,20 @@ class InstaChatClient extends EventEmitter {
 
   // --- Reactions API ---
 
-  async sendReaction(conversationId, messageId, emoji = '❤️') {
-    return this.reactions.sendReaction(conversationId, messageId, emoji);
+  async sendReaction(conversationId, messageId, emoji = '❤️', options = {}) {
+    return this.reactions.sendReaction(conversationId, messageId, emoji, options);
   }
 
-  async deleteReaction(conversationId, messageId) {
-    return this.reactions.deleteReaction(conversationId, messageId);
+  async react(conversationId, messageId, emoji = '❤️', options = {}) {
+    return this.reactions.sendReaction(conversationId, messageId, emoji, options);
+  }
+
+  async deleteReaction(conversationId, messageId, emoji = '❤️', options = {}) {
+    return this.reactions.deleteReaction(conversationId, messageId, emoji, options);
+  }
+
+  async unreact(conversationId, messageId, emoji = '❤️', options = {}) {
+    return this.reactions.deleteReaction(conversationId, messageId, emoji, options);
   }
 
   // --- Read Receipts & Activity API ---
@@ -721,12 +739,28 @@ class InstaChatClient extends EventEmitter {
     return this.users.getFriendshipStatuses(userIds);
   }
 
-  async followUser(userId) {
-    return this.users.followUser(userId);
+  async followUser(userIdOrUsername, options = {}) {
+    return this.users.followUser(userIdOrUsername, options);
   }
 
-  async unfollowUser(userId) {
-    return this.users.unfollowUser(userId);
+  async follow(userIdOrUsername, options = {}) {
+    return this.users.followUser(userIdOrUsername, options);
+  }
+
+  async unfollowUser(userIdOrUsername, options = {}) {
+    return this.users.unfollowUser(userIdOrUsername, options);
+  }
+
+  async unfollow(userIdOrUsername, options = {}) {
+    return this.users.unfollowUser(userIdOrUsername, options);
+  }
+
+  async toggleFollow(userIdOrUsername, options = {}) {
+    return this.users.toggleFollow(userIdOrUsername, options);
+  }
+
+  async isFollowing(userIdOrUsername) {
+    return this.users.isFollowing(userIdOrUsername);
   }
 
   async removeFollower(userId) {
@@ -814,6 +848,132 @@ class InstaChatClient extends EventEmitter {
 
   async replyToNote(noteId, text, options = {}) {
     return this.notes.replyToNote(noteId, text, options);
+  }
+
+  // --- Feed Posts, Carousels, Reels & Media Reactions API ---
+
+  async createPost(fileInput, options = {}) {
+    return this.posts.createPost(fileInput, options);
+  }
+
+  async postPhoto(fileInput, options = {}) {
+    return this.posts.createPost(fileInput, options);
+  }
+
+  async createCarouselPost(fileInputs, options = {}) {
+    return this.posts.createCarouselPost(fileInputs, options);
+  }
+
+  async postCarousel(fileInputs, options = {}) {
+    return this.posts.createCarouselPost(fileInputs, options);
+  }
+
+  async createReel(videoInput, options = {}) {
+    return this.posts.createReel(videoInput, options);
+  }
+
+  async postReel(videoInput, options = {}) {
+    return this.posts.createReel(videoInput, options);
+  }
+
+  async deletePost(mediaIdOrUrl, options = {}) {
+    return this.posts.deletePost(mediaIdOrUrl, options);
+  }
+
+  async getPost(mediaIdOrUrl) {
+    return this.posts.getPost(mediaIdOrUrl);
+  }
+
+  async getReel(reelIdOrUrl) {
+    return this.posts.getReel(reelIdOrUrl);
+  }
+
+  async getUserPosts(userIdOrUsername, options = {}) {
+    return this.posts.getUserPosts(userIdOrUsername, options);
+  }
+
+  async getUserReels(userIdOrUsername, options = {}) {
+    return this.posts.getUserReels(userIdOrUsername, options);
+  }
+
+  async likePost(postIdOrUrl, options = {}) {
+    return this.posts.likePost(postIdOrUrl, options);
+  }
+
+  async unlikePost(postIdOrUrl, options = {}) {
+    return this.posts.unlikePost(postIdOrUrl, options);
+  }
+
+  async reactPost(postIdOrUrl, emoji = '❤️', options = {}) {
+    return this.posts.reactPost(postIdOrUrl, emoji, options);
+  }
+
+  async unreactPost(postIdOrUrl, options = {}) {
+    return this.posts.unreactPost(postIdOrUrl, options);
+  }
+
+  async likeReel(reelIdOrUrl, options = {}) {
+    return this.posts.likeReel(reelIdOrUrl, options);
+  }
+
+  async unlikeReel(reelIdOrUrl, options = {}) {
+    return this.posts.unlikeReel(reelIdOrUrl, options);
+  }
+
+  async reactReel(reelIdOrUrl, emoji = '❤️', options = {}) {
+    return this.posts.reactReel(reelIdOrUrl, emoji, options);
+  }
+
+  async unreactReel(reelIdOrUrl, options = {}) {
+    return this.posts.unreactReel(reelIdOrUrl, options);
+  }
+
+  async likeStory(storyMediaId, options = {}) {
+    return this.posts.likeStory(storyMediaId, options);
+  }
+
+  async unlikeStory(storyMediaId, options = {}) {
+    return this.posts.unlikeStory(storyMediaId, options);
+  }
+
+  async reactStory(storyMediaId, emoji = '❤️', options = {}) {
+    return this.posts.reactStory(storyMediaId, emoji, options);
+  }
+
+  async commentOnPost(mediaIdOrUrl, text, options = {}) {
+    return this.posts.commentOnPost(mediaIdOrUrl, text, options);
+  }
+
+  async commentOnReel(reelIdOrUrl, text, options = {}) {
+    return this.posts.commentOnReel(reelIdOrUrl, text, options);
+  }
+
+  async deleteComment(mediaIdOrUrl, commentId) {
+    return this.posts.deleteComment(mediaIdOrUrl, commentId);
+  }
+
+  async likeComment(commentId) {
+    return this.posts.likeComment(commentId);
+  }
+
+  async unlikeComment(commentId) {
+    return this.posts.unlikeComment(commentId);
+  }
+
+  async getPostComments(mediaIdOrUrl, options = {}) {
+    return this.posts.getPostComments(mediaIdOrUrl, options);
+  }
+
+  async getPostLikers(mediaIdOrUrl) {
+    return this.posts.getPostLikers(mediaIdOrUrl);
+  }
+
+  async savePost(mediaIdOrUrl) {
+    return this.posts.savePost(mediaIdOrUrl);
+  }
+
+  async unsavePost(mediaIdOrUrl) {
+    return this.posts.unsavePost(mediaIdOrUrl);
   }
 }
 
